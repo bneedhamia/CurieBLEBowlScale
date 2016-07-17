@@ -5,4 +5,6 @@ This project is a follow-on to the Dog Bed Scale, [CurieBLEWeightMonitor](https:
 ## Status
 I'm just now starting to make notes about the design - it's far from usable.
 ## Files
-TO DO
+* BillOfMaterials.ods = parts list, with prices and sources
+* CurieBLEBowlScale.ino = the scale Aruduino 101 Sketch
+* ProjectDiary.odt = the day-to-day unfolding of the project over time
