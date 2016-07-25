@@ -1,6 +1,5 @@
 /*
  * Dog Water or Food Bowl Weight Scale for Arduino/Genuino 101.
- * BEING WRITTEN - NOT READY TO EVEN COMPILE YET.
  * 
  * This Sketch (will) periodically reports, through BLE, the total weight on the scale,
  * for example: the top of the scale, the water bowl, and the water in the bowl.
@@ -215,14 +214,15 @@ void setup() {
   ble.addAttribute(bleWeightMeasurement);
 
   // Make our first measurement so we have something to report.
-  measure();
+  weight_kg = hx711.get_units(SAMPLES_PER_WEIGHT);
+  Serial.println(weight_kg, 2);
   
   /*
    * Initialize our BLE Characteristics from that measurement
    * so that they have a value when we begin.
    */
   setBleWeightFeature();
-  setBleWeightMeasurement(0, weight_kg);
+  setBleWeightMeasurement(weight_kg);
 
   // Start the BLE radio
   ble.begin();
@@ -259,7 +259,7 @@ void loop() {
     Serial.println(weight_kg, 2);
 
     // Send the new reading
-    setBleWeightMeasurement(0, weight_kg);
+    setBleWeightMeasurement(weight_kg);
   }
   
 #endif
