@@ -2,7 +2,7 @@
  * Dog Water or Food Bowl Weight Scale for Arduino/Genuino 101.
  * BEING WRITTEN - NOT READY TO EVEN COMPILE YET.
  * 
- * This Sketch periodically reports, through BLE, the total weight on the scale,
+ * This Sketch (will) periodically reports, through BLE, the total weight on the scale,
  * for example: the top of the scale, the water bowl, and the water in the bowl.
  * This data provides enough information for a cloud service to calculate
  * when (and perhaps how much) the dog is drinking and when the bowl is refilled.
@@ -25,14 +25,16 @@
  *   - Take everything off the scale.
  *   - Ideally, leave the room for 10 minutes to gather data that isn't
  *     affected by the vibration of the floor.
- *   - Record the values for zero-load.  Those are the Offset values.
+ *   - Record the value for zero-load.  This is the Offset value for the HX711.
  *   - Measure the weight of a known weight, such as an exercise weight.
- *   - Place the weight on the scale.
+ *   - Fill the dog's water or food bowl.
+ *   - Weigh the filled bowl, using a bathroom scale (you may have to weigh
+ *     yourself, holding and not-holding the bowl, then calculate the difference).
+ *   - Place the filled bowl on the scale.
  *   - wait some time (perhaps a day) to accomodate Load Sensor Creep.
  *   - Leave the room for say 10 minutes to gather data without floor vibration.
- *   - Record the values for the known weight.
- *   - Repeat this process for a set of various weights,
- *     Especially weights that are approximately the weight of a full water bowl.
+ *   - Record the value for the filled bowl.
+ *   - If you think it will help, repeat the process with the empty bowl,
  *   - Using the known weights and corresponding values,
  *     estimate the Scale value for the Load Cell.
  *     
@@ -68,7 +70,7 @@
 const char *BLE_LOCAL_NAME = "K9 Water";
 
 /*
- * CALIBRATE_SCALE = uncomment this line to report raw
+ * CALIBRATE_SCALE = uncomment this line to report the raw
  *  Load Cell Amplifier value for calculating calibration.
  * Comment out this line to run the normal scale software.
  */
@@ -146,33 +148,28 @@ HX711 hx711(PIN_HX711_DOUT, PIN_HX711_CLK);
  * bleWeightFeature = the features supported by this weight device.
  *   The '4' = 4 bytes are required to store the (32-bit) value.
  * bleWeightMeasurement = the weight measurement itself.
- *   The '4' = 4 bytes are required to store the value:
- *   1 byte of flags, 2 bytes of weight, and 1 byte of User Id.
+ *   The '3' = 3 bytes are required to store the value:
+ *   1 byte of flags and 2 bytes of weight.
  */
 
 BLEPeripheral ble;
 BLEService bleWeightService("181D"); 
 BLECharacteristic bleWeightFeature("2A9E", BLERead | BLENotify, 4);
-BLECharacteristic bleWeightMeasurement("2A9D", BLERead | BLENotify, 4);
+BLECharacteristic bleWeightMeasurement("2A9D", BLERead | BLENotify, 3);
 
 /*
- * total_kg = Weight (kg) read from the Load Cell.
+ * weight_kg = Weight (kg) read from the Load Cell.
  * This weight includes everything on the scale:
  * the bowl plus the food or water in it.
  */
-float total_kg;
+float weight_kg;
 
-/*TODO REWRITE THIS.
+/*
  * previousWeightTimeMs = Time (ms since reset) of the
  *   most recent weight reading.
  * Used to control how often we measure new Load Sensor values.
- * 
- * weightReportTimeMs = Time (ms since reset) of the
- *   most recent BLE report of weight.  Used because we report multiple
- *   "User" weights per weight reading.
  */
 unsigned long previousWeightTimeMs;
-unsigned long weightReportTimeMs;
 
 
 void setup() {
@@ -205,13 +202,10 @@ void setup() {
   hx711.set_offset(CELL_OFFSET);
 
   /*
-   * Set the previous weight reading and reporting time to 0
-   *   so that we will immediately read and start reporting the weight.
-   * Set the UserId so that the next UserId reported will be User 0.
-   *   See USER_*.
+   * Set the previous reporting time so that
+   *   we will wait one interval before our second reading.
    */
-  previousWeightTimeMs = 0L;
-  weightReportTimeMs = 0L;
+  previousWeightTimeMs = millis() + MS_PER_WEIGHT_READING;
 
   // Setup BLE (Bluetooth Low Energy)
   ble.setLocalName(BLE_LOCAL_NAME);
@@ -220,17 +214,15 @@ void setup() {
   ble.addAttribute(bleWeightFeature);
   ble.addAttribute(bleWeightMeasurement);
 
-  // Make an initial measurement so we have something to report.
+  // Make our first measurement so we have something to report.
   measure();
   
   /*
    * Initialize our BLE Characteristics from that measurement
    * so that they have a value when we begin.
-   * Note: this USER_RESET value will be overwritten almost immediately.
-   *   Consequently, the gateway may not see it before it changes.
    */
   setBleWeightFeature();
-  setBleWeightMeasurement(0, total_kg);
+  setBleWeightMeasurement(0, weight_kg);
 
   // Start the BLE radio
   ble.begin();
@@ -256,43 +248,21 @@ void loop() {
   
 #else
 
-  unsigned long now = millis();
-
   // If it's time to process a sample, do it.
   
+  unsigned long now = millis();
   if (now - previousWeightTimeMs > MS_PER_WEIGHT_READING) {
     previousWeightTimeMs = now;
 
-    weightReportTimeMs = now;
+    // read the weight from the load sensor.
+    weight_kg = hx711.get_units(SAMPLES_PER_WEIGHT);
+    Serial.println(weight_kg, 2);
 
-    // read the weight and make all the calculations.
-    measure();
-
-    Serial.println(total_kg, 2);
-  }
-
-  /*TODO rewrite this
-   * Each weight reading produces NUM_USERS different reports.
-   * If it's time to report a new weight, do it.
-   */
-  if (now - weightReportTimeMs > MS_PER_WEIGHT_REPORTED) {
-    weightReportTimeMs = now;
-
-    setBleWeightMeasurement(0, total_kg);
+    // Send the new reading
+    setBleWeightMeasurement(0, weight_kg);
   }
   
 #endif
-}
-
-
-/*
- * Perform one measurement of the total weight.
- */
-void measure() {
-
-  // Read the weight (kg) from each Load Sensor
-  total_kg = hx711.get_units(SAMPLES_PER_WEIGHT);
-
 }
 
 
@@ -332,30 +302,28 @@ void setBleWeightFeature() {
 
 
 /*TODO REWRITE FOR NO USER ID
- * Sets our BLE Characteristic
- * given a weight measurement (in kg) and
- * the "User" the weight corresponds to.  0xFF = unknown user.
+ * Sets our BLE Characteristic given a weight measurement (in kg)
  * 
  * See https://developer.bluetooth.org/gatt/characteristics/Pages/CharacteristicViewer.aspx?u=org.bluetooth.characteristic.weight_measurement.xml
  *  for details of the encoding of weight in BLE.
  */
-void setBleWeightMeasurement(uint8_t userId, float weightKg) {
+void setBleWeightMeasurement(float weightKg) {
   unsigned char flags = 0;      // description of the weight
   uint16_t newVal = 0;          // field value: the weight in BLE format
-  unsigned char bytes[4] = {0}; // data, encoded for transmission.
+  unsigned char bytes[3] = {0}; // data, encoded for transmission.
   
   /*
    * Set the flags:
    * bit 0 = 0 means we're reporting in SI units (kg and meters)
    * bit 1 = 0 means there is no time stamp in our report
-   * bit 2 = 1 means User ID is in our report
+   * bit 2 = 0 means User ID is NOT in our report
    * bit 3 = 0 means no BMI and Height are in our report
    * bits 4..7 are reserved, and set to zero.
    */
 
   flags |= 0x0 << 0;
   flags |= 0x0 << 1;
-  flags |= 0x1 << 2;
+  flags |= 0x0 << 2;
   flags |= 0x0 << 3;
 
   // Convert the weight into BLE representation
@@ -375,8 +343,6 @@ void setBleWeightMeasurement(uint8_t userId, float weightKg) {
   // BLE GATT multi-byte values are encoded Least-Significant Byte first.
   bytes[1] = (unsigned char) newVal;
   bytes[2] = (unsigned char) (newVal >> 8);
-
-  bytes[3] = userId;
 
   bleWeightMeasurement.setValue(bytes, sizeof(bytes));
 }
