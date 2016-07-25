@@ -88,7 +88,7 @@ const char *BLE_LOCAL_NAME = "K9 Water";
  *   Calculated from CALIBRATE_SCALE and a spreadsheet.
  */
 
-const long CELL_OFFSET = 19907L;
+const long CELL_OFFSET = 104430L;
 const float CELL_SCALE_KG = 48119.272;
 
 /*
