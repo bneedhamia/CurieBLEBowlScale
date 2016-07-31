@@ -58,16 +58,16 @@ const MIN_SPARKFUN_UPLOAD_SECS = 9;
 
 var properties;		// app configuration, read from CONFIG_FILENAME
 
-/*TODO mod to do just one read per scan.
+/*
  * The current state of our BLE (Bluetooth Low Energy) communications.
  */
 var bleState = {
   scanning: false,	// if true, scanning is on (and must be stopped before exiting).
   peripheral: null,	// the connected or connecting BLE peripheral object.
   connected: false,	// if true, we're connected to the device (and should disconnect before exiting).
-  gatt: null,		// the BLE Characteristic (gatt) that we're subscribed to.
-  subscribed: false,	// if true, we're subscribed to data changes (and should unsubscribe before exiting).
-  weights: []		// indexed by USER_*, non-null if we've read that user's weight.
+  gatt: null,		// the BLE Characteristic (gatt) that we're reading from.
+  waitingForData: false,// if true, we're waiting for weight data to come back from the scale.
+  weightKg: -1		// the most recent weight (kg) we've read from the scale. Negative = no weight has been read.
 };
 
 /*
@@ -134,7 +134,7 @@ function initialize() {
  *   privateKey String. The private key of the data.sparkfun.com stream to upload to.
  *     Keep this secret, to prevent unauthorized apps from uploading to your stream.
  *   uploadSecs Number. The time (seconds) per upload to your data.sparkfun.com stream.
- *     That is, how often to upload weights.
+ *     That is, how often to upload a weight.
  */
 function startReadingAppConfig() {
   var fName = os.homedir() + path.sep + CONFIG_FILENAME;
@@ -194,9 +194,9 @@ function startScaleRead() {
 
   if (bleState.scanning) {
     logger.debug('Continuing existing scan.');
-  } else if (bleState.connected || bleState.subscribed) {
+  } else if (bleState.connected || bleState.waitingForData) {
     logger.debug('Skipping scan: previous scan is still busy. Connected: ' + bleState.connected
-      + ', Subscribed: ' + bleState.subscribed + '.');
+      + ', WaitingForData: ' + bleState.waitingForData + '.');
   } else {
     logger.debug('Scanning started.');
 
@@ -310,66 +310,42 @@ function onCharacteristicsDiscovered(err, gatts) {
 
   bleState.gatt = gatts[0];
 
-  // NOTE: each .on() call adds another listener to this gatt.  We must remove it when done.
-  bleState.gatt.on('data', onData);
-
-  // Now that our callbacks is set up, turn on notification of new values.
-  for (i = 0; i < NUM_USERS; ++i) {
-    bleState.weights[i] = null;
-  }
-  bleState.subscribe = true;
-  bleState.gatt.subscribe();	// triggers 'data' event on notification
+  bleState.waitingForData = true;
+  bleState.gatt.read(onRead);
 }
 
 /*
- * Called when new Weight Measurement is ready,
- * reads and interprets that Weight Measurement value.
+ * Called when the weight read completes.
+ * Reads and interprets the that Weight value.
  */
-function onData(data, isNotify) {
-  var userWeight;	// userId and weight, returned by parseBleWeight()
+function onRead(err, data) {
+  if (err) {
+    logger.error('Gatt Read failed: ' + err);
+    bleState.peripheral.disconnect(function(err) {
+      bleState.connected = false;
+      bleState.peripheral = null;
+      process.exit(1);
+    });
+    return; // to wait for the disconnect to complete
+  }
+
+  var userWeight;	// weight, returned by parseBleWeight()
 
   userWeight = parseBleWeight(data);
-  //logger.info('User ' + userWeight.userId + ': ' + userWeight.weightKg + ' kg');
+  //logger.info(userWeight.weightKg + ' kg'); // this weight is reported on successful upload
+  bleState.weightKg = userWeight.weightKg;
+  
+  // Close up all the reading stuff.
+  bleState.waitingForData = false;
+  bleState.gatt = null;
 
-  /*
-   * Weights are reported in order: USER_TOTAL first, then the others.
-   * We want a consistent set of weights,
-   * starting with USER_TOTAL and ending with NUM_USERS - 1.
-   */
-  if (userWeight.userId >= NUM_USERS) {
-    return;	// skip USER_RESET because it's a temporary state.
-  }
-  if (userWeight.userId != USER_TOTAL && !bleState.weights[USER_TOTAL]) {
-    return;	// skip reports until the start of a set.
-  }
-
-  bleState.weights[userWeight.userId] = userWeight.weightKg;
-
-  if (userWeight.userId == NUM_USERS - 1) {
-    // We've read a set of weights. 
-
-    // Close up all the BLE things.
-    bleState.gatt.removeListener('data', onData);	// removes our listener, so we don't create more and more
-    bleState.gatt.unsubscribe(onGattUnsubscription);
-    bleState.gatt = null;
-  }
-}
-
-/*
- * Called when gatt.unsubscribe() completes.
- */
-function onGattUnsubscription(err) {
-  bleState.subscribe = false;
-  if (err) {
-    logger.error('Failed to unsubscribe: ' + err);
-    // go on - what else can we do?
-  }
   bleState.peripheral.disconnect(onNormalPeripheralDisconnected);
-};
+  
+}
 
 /*
  * Called on the normal disconnection
- * that happens when we've successfully read one complete set of weights
+ * that happens when we've successfully read the weight
  */
 function onNormalPeripheralDisconnected(err) {
   var streamKeys;
@@ -378,7 +354,7 @@ function onNormalPeripheralDisconnected(err) {
   bleState.connected = false;
   bleState.peripheral = null;
   if (err) {
-    logger.error('Failed to disconnect: ' + err);
+    logger.warn('Failed to disconnect: ' + err);
     // ignore the error.
   }
   
@@ -390,11 +366,7 @@ function onNormalPeripheralDisconnected(err) {
   };
 
   record = {
-    'total_kg': bleState.weights[USER_TOTAL],
-    'ul_kg': bleState.weights[USER_UL],
-    'ur_kg': bleState.weights[USER_UR],
-    'll_kg': bleState.weights[USER_LL],
-    'lr_kg': bleState.weights[USER_LR]
+    'scale_kg': bleState.weightKg
   }; 
 
   startSendToSparkfun(streamKeys, record, onSparkfunUploadComplete);
@@ -409,24 +381,22 @@ function onSparkfunUploadComplete(err) {
 
   if (err) {
     logger.error('Upload error: ' + err);
-  } else {
-    for (i = 0; i < NUM_USERS; ++i) {
-      str = str + ' ' + bleState.weights[i];
-    }
-    logger.debug('Upload successful. User 0-4 weights:' + str);
+    return;  // We'll have another chance to upload soon.
   }
+  logger.debug('Upload successful. weight (kg):' + bleState.weightKg);
+  
+  // Wait for the timer to start the whole thing over.
 }
  
 /*
  * Parse the standard BLE Weight Measurement characteristic.
  * param bleData = the raw bytes of the characteristic.
- * returns an object with fields 'userId' = the user, and 'weightKg' = reported weight in Kilograms.
+ * returns an object with field 'weightKg' = reported weight in Kilograms.
  *
  * See the BLE spec or the scale's Arduino Sketch for the format of this data:
  * [0] = flags
  * [1] = Weight least-significant byte
  * [2] = Weight most-significant byte
- * [0] = User ID (see USER_* above)
  *
  * Flag values:
  * bit 0 = 0 means we're reporting in SI units (kg and meters)
@@ -440,7 +410,7 @@ function parseBleWeight(bleData) {
   var wFlags;		// flags for the weight encoding
   var i;
 
-  if (bleData.length != 4) {
+  if (bleData.length != 3) {
     logger.error('Garbled BLE Weight measurement: data length = ' + bleData.length);
     return;
   }
@@ -455,8 +425,8 @@ function parseBleWeight(bleData) {
     logger.error('Skipping unexpected Weight Flag: scale includes a timestamp');
     return;
   }
-  if ((wFlags & 0x04) == 0) {  // we assume a user id
-    logger.error("Skipping unexpected Weight Flag: scale doesn't report user ID");
+  if ((wFlags & 0x04) != 0) {  // we assume no user id
+    logger.error("Skipping unexpected Weight Flag: scale reports user ID");
     return;
   }
   if ((wFlags & 0x08)) {  // we assume no BMI or Height
@@ -467,8 +437,6 @@ function parseBleWeight(bleData) {
   // Assemble the weight, scaled by the standard BLE value.
   userWeight.weightKg = (bleData[2] << 8) + bleData[1];
   userWeight.weightKg = (userWeight.weightKg * 5.0) / 1000.0;
-
-  userWeight.userId = bleData[3];
 
   return userWeight;
 }
