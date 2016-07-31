@@ -1,11 +1,10 @@
 # CurieBLEBowlScale
-This project is an Arduino 101 (Curie) Dog water or food bowl continuous weight scale that sends results via BLE (Bluetooth Low Energy).  The measured weight can be read by any standard BLE (Bluetooth Low Energy) application.
+This project is an Arduino 101 (Curie) Dog water or food bowl continuous weight scale that sends results via BLE (Bluetooth Low Energy).  The measured weight can be read by any standard BLE (Bluetooth Low Energy) application. The project contains a Raspberry Pi app to upload to data.sparkfun.com. See https://github.com/bneedhamia/CurieBLEWeightMonitor scalegateway folder for instructions on setting up the Pi.
 
 The blog about this project begins at https://needhamia.com/?p=880
 
 This project is a follow-on to the Dog Bed Scale, [CurieBLEWeightMonitor](https://github.com/bneedhamia/CurieBLEWeightMonitor). 
-## Status
-The scale is painted and calibrated. I'm now working on the Raspberry Pi gateway Node.js code.
+
 ## Files
 * BillOfMaterials.ods = parts list, with prices and sources
 * CurieBLEBowlScale.ino = the scale Aruduino 101 Sketch
