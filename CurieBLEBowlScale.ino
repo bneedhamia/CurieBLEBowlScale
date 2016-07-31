@@ -1,8 +1,8 @@
 /*
  * Dog Water or Food Bowl Weight Scale for Arduino/Genuino 101.
  * 
- * This Sketch (will) periodically reports, through BLE, the total weight on the scale,
- * for example: the top of the scale, the water bowl, and the water in the bowl.
+ * This Sketch periodically reports, through BLE, the total weight on the scale,
+ * for example: the waterproof placement, the water bowl, and the water in the bowl.
  * This data provides enough information for a cloud service to calculate
  * when (and perhaps how much) the dog is drinking and when the bowl is refilled.
  * 
@@ -26,20 +26,19 @@
  *     affected by the vibration of the floor.
  *   - Record the value for zero-load.  This is the Offset value for the HX711.
  *   - Measure the weight of a known weight, such as an exercise weight.
- *   - Fill the dog's water or food bowl.
- *   - Weigh the filled bowl, using a bathroom scale (you may have to weigh
- *     yourself, holding and not-holding the bowl, then calculate the difference).
- *   - Place the filled bowl on the scale.
- *   - wait some time (perhaps a day) to accomodate Load Sensor Creep.
+ *     I used a food scale to measure the weight of a nominally 5 pound exercise weight
+ *     in kilograms.
+ *   - Place the known weight on the scale.
+ *   - wait 20 minutes or so to accomodate Load Cell Creep.
  *   - Leave the room for say 10 minutes to gather data without floor vibration.
- *   - Record the value for the filled bowl.
- *   - If you think it will help, repeat the process with the empty bowl,
- *   - Using the known weights and corresponding values,
- *     estimate the Scale value for the Load Cell.
+ *   - Record the value for the known weight.
+ *     estimate the Scale value for the Load Cell:
+ *       Scale = (known_weight_output - empty_scale_output) / known_weight_in_kg
+ *     Don't worry if the readings are negative; the math works for negative numbers as well.
  *     
  * - Run:
  *   - Comment out CALIBRATE_SCALE.
- *   - Set *_OFFSET and *_SCALE to the values you calculated above.
+ *   - Set CELL_OFFSET and CELL_SCALE to the values you calculated above.
  *   - Start the Sketch.
  *   - Read the reported weights, etc. using a BLE device.
  *   - Typically you'll want to use a BLE-to-WiFi gateway
@@ -85,22 +84,17 @@ const char *BLE_LOCAL_NAME = "K9 Water";
  *   calculated from CALIBRATE_SCALE readings with nothing on the scale.
  * CELL_SCALE_KG = scale from Amplifier units to kg for that Load Cell.
  *   That is, number of Amplifier reading units per Kilogram.
- *   Calculated from CALIBRATE_SCALE and a spreadsheet.
+ *   Calculated from CALIBRATE_SCALE readings described above.
  */
 
-const long CELL_OFFSET = 104430L;
-const float CELL_SCALE_KG = 48119.272;
+const long CELL_OFFSET = -22050L;
+const float CELL_SCALE_KG = -219327.839;
 
 /*
  * MS_PER_WEIGHT_READING = time (ms) for each reading the scale weight.
- *   That is, the time per record of data eventually uploaded to the cloud.
- *   The shorter this time is, the more data will be uploaded.
- *   The longer this time is, the more likely we'll miss some movement.
- *   During BLE testing (with no uploading) you probably want to set this
- *   to a under 1 minute (for example, 18000L);
- *   When uploading data to a service, you probably want to set this
- *   to at least a minute (60000L).
- *   If you find your gateway is missing data, increase this number.
+ *   That is, the time per record of data that could be uploaded to the cloud.
+ *   The shorter this time is, the more data can be uploaded.
+ *   The longer this time is, the more likely we'll miss some drinking.
  */
 const unsigned long MS_PER_WEIGHT_READING = 10 * 1000L;
 
@@ -215,7 +209,7 @@ void setup() {
 
   // Make our first measurement so we have something to report.
   weight_kg = hx711.get_units(SAMPLES_PER_WEIGHT);
-  Serial.println(weight_kg, 2);
+  Serial.println(weight_kg, 3);
   
   /*
    * Initialize our BLE Characteristics from that measurement
@@ -256,7 +250,7 @@ void loop() {
 
     // read the weight from the load sensor.
     weight_kg = hx711.get_units(SAMPLES_PER_WEIGHT);
-    Serial.println(weight_kg, 2);
+    Serial.println(weight_kg, 3);
 
     // Send the new reading
     setBleWeightMeasurement(weight_kg);
@@ -301,7 +295,7 @@ void setBleWeightFeature() {
 }
 
 
-/*TODO REWRITE FOR NO USER ID
+/*
  * Sets our BLE Characteristic given a weight measurement (in kg)
  * 
  * See https://developer.bluetooth.org/gatt/characteristics/Pages/CharacteristicViewer.aspx?u=org.bluetooth.characteristic.weight_measurement.xml
@@ -370,7 +364,8 @@ void reportStatistics(HX711 *pHx) {
 
   /*
    * Calculate the standard deviation:
-   * the average of the squares of the differences from the Mean.
+   * the square root of the average of the squares
+   * of the differences from the Mean.
    */
 
   stddev = 0;
