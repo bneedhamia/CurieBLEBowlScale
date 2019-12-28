@@ -1,4 +1,6 @@
 # CurieBLEBowlScale
+Obsolete; Intel has discontinued the Curie.
+
 This project is an Arduino 101 (Curie) Dog water or food bowl continuous weight scale that sends results via BLE (Bluetooth Low Energy).  The measured weight can be read by any standard BLE (Bluetooth Low Energy) application. The project contains a Raspberry Pi app to upload to data.sparkfun.com.  With this data you can find when and how much your pet drinks or eats, and when you fill the bowl.
 
 NOTE: Intel discontinued the Arduino 101 in 2017. Because of the end-of-life of the Arduino 101, this project is obsolete.
